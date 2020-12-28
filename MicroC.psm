@@ -1,0 +1,170 @@
+;=============================
+;== PREAMBLE
+
+;Declare port in and out
+ BUTTONS_port DSIN $02 ; RES, ADD, SUB, MUL, DIV.
+ SWITCHES_port DSIN $03 ; Values input.
+
+ char21 DSOUT $04 ; Lower 7-seg display.
+ char43 DSOUT $05 ; Upper 7-seg display.
+ LEDS_port DSOUT $06; Programme output display.
+ 
+ ;Declare constants
+  temp1 EQU 01
+  temp2 EQU 02
+  temp3 EQU 03
+  MASK EQU $FF ;mask="11111111" for flash_led.
+  
+ ;ROM Creation
+ VHDL "ROM_form.vhd", "ROM.vhd", "ROM"
+ ORG 0;
+ 
+;=============================
+;== MAIN APPLICATION CODE
+	
+	START:
+                ;First value input
+		  		IN	 s0, 	SWITCHES_port;Input value from switches.
+		  		STORE s0,	temp1		 ;Store value in RAM.
+		  		out s0,		char43		 ;Display value on char43 LEDs.
+		  		
+		  		CALL delay_reset
+		  		;Second value input		  		
+		  		IN	 s2, SWITCHES_port	 ;Input value from switches.
+		  		STORE s2, temp3		  	 ;Store value in RAM.
+		  		OUT	  s2, char43		 ;Display value on char43 LEDs.
+				  		  		
+		  		CALL delay_reset
+		  		;Operation selection		  		
+		  		IN	 s1,	BUTTONS_port;Input value from buttons.
+		  		STORE	s1,	temp2		;Store value in RAM
+		  		OUT		s1, LEDS_port	;Display value on LEDs.
+		  		
+		  		CALL delay_reset
+	  			;Programme selector - compare s1 value to select.
+			    COMP s1,  $02
+ 		        JUMP C, reset		; if s1 <02 go to reset.
+		  		
+		  		COMP s1,  $03
+		  		JUMP C, addition	; if s1 <03 go to addition.
+		  		
+		  		COMP s1,  $05
+		  		JUMP C, substraction; if s1 <05 go to substraction.
+		  		
+ 				COMP s1,  $09
+		  		JUMP C, multiplication; if s1 <09 go to multiplication.
+		  						
+  				COMP s1,  $11
+		  		JUMP C, division	;if s1 <11 go to division.
+ 	  			
+			    ;Post calculation and output	  		
+	 			FINISH:
+ 					  CALL delay_reset ;Delay.
+ 					  CALL flash_LEDs ;Flash LEDs twice.
+ 					  CALL flash_LEDs
+ 					  CALL reset	 ;Reset all registers.
+ 					  JUMP	START	 ;Back to top of the main programme.
+		
+;=============================
+;== SUB ROUTINES
+	
+delay_reset:
+	LOAD  s4, s4			  ;Load register with itself to create delay.
+	RET
+			
+flash_LEDs:
+		 LOAD s4, $AA		  ;Load "10101010" to s4.
+		 OUT s4, LEDS_port	  ;Display s4 on LEDs.
+		 CALL delay_reset	  ;Delay.
+		 XOR s4, MASK		  ;s4 XOR MASK ("11111111").
+		 OUT s4, LEDS_port	  ;Display new s4 on LEDs.
+		 RET 	 			  ;Back to main programme.
+reset:
+	  	;Reset all registers, displays and RAM:
+		LOAD	s0, $00		  ;LOAD "00000000" to s0 then load s0 to the rest.
+		LOAD	s1, s0
+		LOAD	s2, s0
+		LOAD	s3, s0
+		LOAD	s4, s0
+		LOAD	s5, s0
+		LOAD	s6, s0
+		LOAD	s7, s0
+		LOAD	s8, s0
+		LOAD	s9, s0
+		OUT	s0, char21
+		OUT	s0, char43
+		OUT	s0, LEDS_port
+		JUMP	START	 	  ; reset performed back to programme start.
+							
+substraction:
+		SUB	s0, s2			  ;Substraction calculation.		
+		CALL flash_LEDs		  ;LEDs flashing during calculation.
+		OUT	s0, char21		  ;Output result
+		JUMP 	FINISH		  ;Go to sequence finish.
+ 	
+addition:
+		ADD	s0, s2			  ;Addition calculation.
+		CALL flash_LEDs		  ;LEDs flashing during calculation.
+		OUT	s0, char21		  ;Output result.
+		JUMP 	FINISH		  ;Go to sequence finish.	
+		
+division:
+		;Register Declaration:
+        ;dividend - s0
+		;divisor - s2
+		quotient	 EQU s8	
+		remainder	 EQU s9
+		bit_mask_d	 EQU s3
+					
+		LOAD bit_mask_d, $80  	 ;Start with MSB.
+		LOAD remainder, $00		 ;Clear remainder.
+					
+		div_loop:
+		CALL flash_LEDs	   	  	 ;Flash whilst code executing.
+		TEST s0, bit_mask_d	  	 ;Set Carry for test bit=1.
+		SLA remainder			 ;Shift CARRY to lsb of the remainder.
+		SL0 quotient			 ;quotient shifted left.
+							
+		COMP remainder, s2 		 ;Compare remainder to divisor.
+		JUMP C, no_sub	 		 ;Divisor greater -> next bit (no sub).
+		SUB remainder, s2	 	 ;Remainder greater -> substraction.
+		ADD quotient, 01		 ;Add one to quotient.
+							 
+	 	no_sub:
+	 	SR0 bit_mask_d  		 ;shift bit_mask_d to next bit position.
+	 	JUMP NZ, div_loop		 ;Back to div_loop if not zero.
+		     		
+		OUT	 quotient, char21	 ;Calculation output to char21 LED.
+		JUMP 	 FINISH			 ;Go to sequence finish.
+		
+multiplication:
+	    ;Register Declaration:
+		;multiplicand- s0
+		;multiplier - s2
+		bit_mask	 EQU s5
+		result_msb	 EQU s6	  	 	 		;MSB result.
+		result_lsb	 EQU s7					;LSB result.
+					
+        LOAD bit_mask, $01 	  	 	 		;Start at LSB.
+		LOAD result_msb, $00				;Clear.
+		LOAD result_lsb, $00				;Clear.
+					
+		; Looping through all bits in multiplier
+		mult_loop:
+		CALL flash_LEDs	  	  	   	  		;Flash LEDs during calcualtion.
+		TEST s2, bit_mask					;Check if bit is high.
+					
+		JUMP Z, no_add						;Bit not set -> skip add.
+		ADD result_msb, s0					;Occurs in MSB.
+		no_add:
+		SRA result_msb				  		 ;Right shift MSB, CARRY to bit 7,
+											 ;LSB in CARRY.
+		SRA result_lsb						 ;Right shift LSB. LSB from result_msb
+											 ;into bit 7.
+		SL0 bit_mask						 ;Check next bit in multiplier by 
+											 ;shifting bit_mask.
+		JUMP NZ, mult_loop					 ;if not zero go back to mult_loop.
+		OUT result_msb, char21				 ; MSB in top display.
+		OUT result_lsb, char43				 ; LSB in bottom display.		
+		JUMP 	 FINISH			 			 ;Go to sequence finish.
+
